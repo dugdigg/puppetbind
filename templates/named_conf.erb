@@ -1,0 +1,134 @@
+# THIS FILE IS CONTROLLED BY PUPPET
+# module: bind
+//
+// named.conf
+//
+// See /usr/share/doc/bind*/sample/ for example named configuration files.
+//
+
+<% @acls.each do |acl,value| -%>
+acl <%= acl -%> {
+  <%= value -%>;
+};
+
+<% end %>
+
+options {
+  listen-on port 53 { 127.0.0.1; <%= @bind_ip %>;};
+  directory "/var/named";
+  dump-file "/var/named/data/cache_dump.db";
+  statistics-file "/var/named/data/named_stats.txt";
+  memstatistics-file "/var/named/data/named_mem_stats.txt";
+  allow-query { localhost; <% @acls.each do |acl,value| -%><%= acl -%>; <% end -%>};
+<% if @recursion -%>
+  recursion <%= @recursion -%>;
+<% else -%>
+  recursion yes;
+<% end -%>
+<% if @maxrefreshtime -%>
+  max-refresh-time <%= @maxrefreshtime -%>;
+<% end -%>
+<% if @minrefreshtime -%>
+  min-refresh-time <%= @minrefreshtime -%>;
+<% end -%>
+<% if @forwarders.count > 0 -%>
+  forwarders { <%= @forwarders.join('; ') -%>; };
+<% end -%>
+<% if @zone_notify -%>
+  notify <%= @zone_notify -%>;
+<% end -%>
+  dnssec-enable <%= @dnssec_enable -%>;
+  dnssec-validation <%= @dnssec_validation -%>;
+  dnssec-lookaside auto;
+  version "None";
+
+  /* Path to ISC DLV key */
+  bindkeys-file "/etc/named.iscdlv.key";
+
+  managed-keys-directory "/var/named/dynamic";
+};
+
+logging {
+  channel default_debug {
+    file "data/named.log";
+    severity dynamic;
+    print-time yes;
+    };
+    category lame-servers {null;};
+};
+
+zone "." IN {
+  type hint;
+  file "named.ca";
+};
+
+<% @domains.each_pair do |key, hash| -%>
+<% if hash['cidr'] -%>
+<% cidrzone = key.chomp(".in-addr.arpa").split(".").reverse.join(".").concat(".0/#{hash['cidr']}") %>
+<% if hash['cidr'] == 24
+    multizone = [cidrzone]
+   else
+     multizone = scope.function_cidr_zone([cidrzone])
+   end
+-%>
+<% multizone.each do |zone| -%>
+zone  "<%= zone.chomp(".0/24").split(".").reverse.join(".").concat(".in-addr.arpa") %>" {
+  type <%= hash['type'] -%>;
+    <% if hash['type'] == 'slave' -%>
+      file "slaves/zone_<%= key -%>";
+      masters { <%= hash['master'].join(';') -%>;};
+      <% if hash['slave'] -%>
+      allow-transfer { <%= hash['slave'].join(';') -%>;};
+      <% if @zone_notify == 'explicit' -%>
+      also-notify { <%= hash['slave'].join(';') -%>;};
+      <% end -%>
+      <% else -%>
+      allow-transfer {"none";};
+      <% end -%>
+    <% else -%>
+      file "data/zone_<%= zone.chomp(".0/24").split(".").reverse.join(".").concat(".in-addr.arpa") -%>";
+      <% if hash['slave'] -%>
+      allow-transfer { <%= hash['slave'].join(';') -%>;};
+      <% if @zone_notify == 'explicit' -%>
+      also-notify { <%= hash['slave'].join(';') -%>;};
+      <% end -%>
+      <% else -%>
+      allow-transfer {"none";};
+      <% end -%>
+    <% end -%>
+  };
+<% end -%>
+<% else -%>
+zone  "<%= key %>" {
+  type <%= hash['type'] -%>;
+    <% if hash['type'] == 'slave' -%>
+      file "slaves/zone_<%= key -%>";
+      masters { <%= hash['master'].join(';') -%>;};
+      <% if hash['slave'] -%>
+      allow-transfer { <%= hash['slave'].join(';') -%>;};
+      <% if @zone_notify == 'explicit' -%>
+      also-notify { <%= hash['slave'].join(';') -%>;};
+      <% end -%>
+      <% else -%>
+      allow-transfer {"none";};
+      <% end -%>
+    <% elsif hash['type'] == 'forward' -%>
+  forward only;
+  forwarders { <%= hash['forwarders'].join(';') %>;};
+    <% else -%>
+      file "data/zone_<%= key -%>";
+      <% if hash['slave'] -%>
+      allow-transfer { <%= hash['slave'].join(';') -%>;};
+      <% if @zone_notify == 'explicit' -%>
+      also-notify { <%= hash['slave'].join(';') -%>;};
+      <% end -%>
+      <% else -%>
+      allow-transfer {"none";};
+      <% end -%>
+    <% end -%>
+  };
+<% end -%>
+<% end -%>
+
+include "/etc/named.rfc1912.zones";
+include "/etc/named.root.key";
